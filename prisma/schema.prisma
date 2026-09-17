@@ -1,0 +1,153 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String
+  email         String      @unique
+  password_hash String
+  active        Boolean     @default(true)
+  sessions      Session[]
+  memberships   UserUnit[]
+  operations    Operation[]
+
+  @@map("users")
+}
+
+model Session {
+  token_hash String   @id
+  user_id    String   @db.Uuid
+  expires_at DateTime @db.Timestamptz(6)
+  user       User     @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("sessions")
+}
+
+model LoginAttempt {
+  email        String   @id
+  attempts     Int      @default(0)
+  window_start DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("login_attempts")
+}
+
+model Unit {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  timezone    String      @default("America/Sao_Paulo")
+  active      Boolean     @default(true)
+  memberships UserUnit[]
+  desks       Desk[]
+  counters    Counter[]
+  tickets     Ticket[]
+  events      CallEvent[]
+
+  @@map("units")
+}
+
+model UserUnit {
+  user_id String @db.Uuid
+  unit_id String @db.Uuid
+  user    User   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  unit    Unit   @relation(fields: [unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([user_id, unit_id])
+  @@map("user_units")
+}
+
+model Desk {
+  id      String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  unit_id String        @db.Uuid
+  name    String
+  active  Boolean       @default(true)
+  unit    Unit          @relation(fields: [unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  current DeskCurrent[]
+  events  CallEvent[]
+
+  @@unique([unit_id, name])
+  @@unique([id, unit_id])
+  @@map("desks")
+}
+
+model Person {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cpf        String?  @unique
+  name       String
+  birth_date DateTime @db.Date
+  tickets    Ticket[]
+
+  @@map("people")
+}
+
+model Counter {
+  unit_id String   @db.Uuid
+  day     DateTime @db.Date
+  service String
+  value   Int
+  unit    Unit     @relation(fields: [unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([unit_id, day, service])
+  @@map("counters")
+}
+
+model Ticket {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  unit_id   String        @db.Uuid
+  person_id String        @db.Uuid
+  day       DateTime      @db.Date
+  service   String
+  number    Int
+  issued_at DateTime      @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  called_at DateTime?     @db.Timestamptz(6)
+  unit      Unit          @relation(fields: [unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  person    Person        @relation(fields: [person_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  current   DeskCurrent[]
+  events    CallEvent[]
+
+  // The partial queue index and CHECK constraints live in migration.sql.
+  @@unique([unit_id, day, service, number])
+  @@unique([id, unit_id])
+  @@map("tickets")
+}
+
+model DeskCurrent {
+  desk_id   String @id @db.Uuid
+  unit_id   String @db.Uuid
+  ticket_id String @db.Uuid
+  desk      Desk   @relation(fields: [desk_id, unit_id], references: [id, unit_id], onDelete: NoAction, onUpdate: NoAction)
+  ticket    Ticket @relation(fields: [ticket_id, unit_id], references: [id, unit_id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("desk_current")
+}
+
+model CallEvent {
+  id        BigInt   @id @default(autoincrement())
+  unit_id   String   @db.Uuid
+  ticket_id String   @db.Uuid
+  desk_id   String   @db.Uuid
+  desk_name String
+  called_at DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+  unit      Unit     @relation(fields: [unit_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  ticket    Ticket   @relation(fields: [ticket_id, unit_id], references: [id, unit_id], onDelete: NoAction, onUpdate: NoAction)
+  desk      Desk     @relation(fields: [desk_id, unit_id], references: [id, unit_id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([unit_id, id], map: "calls_unit")
+  @@map("call_events")
+}
+
+model Operation {
+  user_id    String @db.Uuid
+  request_id String @db.Uuid
+  payload    String
+  result     Json   @db.JsonB
+  user       User   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([user_id, request_id])
+  @@map("operations")
+}

@@ -1,7 +1,8 @@
 # PRD — Painel de Senhas
 
-**Versão:** 0.1 — Definição inicial  
-**Status:** Aguardando validação das pendências ao final do documento.
+**Versão:** 1.0 — Regras validadas e implementação inicial
+
+**Status:** Implementação inicial concluída, com build, testes transacionais PostgreSQL e fluxo principal no navegador validados. Implantação depende da configuração do ambiente.
 
 ## 1. Objetivo
 
@@ -12,7 +13,7 @@ O sistema deverá permitir o cadastro do assistido na recepção, a emissão de 
 ## 2. Escopo inicial
 
 - Operação em múltiplas unidades.
-- Cadastro e recuperação dos dados do assistido pelo CPF.
+- Cadastro com CPF opcional e recuperação pelo CPF ou por nome e nascimento.
 - Emissão de senhas com identificação por tipo de atendimento.
 - Numeração independente por tipo, reiniciada diariamente.
 - Impressão e exibição da senha emitida.
@@ -31,7 +32,7 @@ O sistema deverá permitir o cadastro do assistido na recepção, a emissão de 
 | Recepção | Identifica ou cadastra o assistido e emite a senha. |
 | Atendente | Chama a próxima senha para seu guichê e repete a chamada quando necessário. |
 
-Os perfis de acesso, a necessidade de login e as responsabilidades administrativas ainda precisam ser confirmados.
+Haverá login com perfil único. Todo usuário autenticado poderá emitir e chamar nas unidades a que estiver vinculado e gerenciar usuários, unidades, vínculos de acesso e guichês nas telas de configuração. O painel público não exige login. Não haverá autocadastro público de usuários.
 
 ## 4. Tipos de atendimento
 
@@ -52,15 +53,16 @@ Os perfis de acesso, a necessidade de login e as responsabilidades administrativ
 - Triagem é um atendimento independente.
 - Não haverá fluxo de encaminhamento entre tipos de atendimento nesta versão.
 
-**Pendente:** confirmar se cada unidade terá seus próprios contadores. A recomendação é que sim.
+Cada unidade terá seus próprios contadores por tipo e dia. Duas unidades poderão emitir `FAM-001` no mesmo dia.
 
 ## 5. Fluxo principal
 
 1. O assistido chega ao guichê de recepção.
-2. A recepção informa o CPF do assistido.
+2. A recepção informa o CPF do assistido ou, na ausência dele, nome e data de nascimento para busca.
 3. O sistema verifica se já existe cadastro:
    - **Cadastro existente:** recupera os dados.
-   - **Novo cadastro:** solicita nome e data de nascimento.
+   - **Novo cadastro:** solicita nome e data de nascimento; o CPF é opcional.
+   - **Busca por nome e nascimento:** apresenta possíveis cadastros para seleção manual. Homônimos não serão unidos automaticamente; a recepção poderá criar outro cadastro.
 4. A recepção confere os dados e seleciona o tipo de atendimento.
 5. O sistema emite a próxima senha daquele tipo.
 6. A senha é exibida na tela e disponibilizada para impressão.
@@ -76,7 +78,7 @@ Os perfis de acesso, a necessidade de login e as responsabilidades administrativ
 
 O sistema deverá suportar várias unidades e identificar a unidade em que cada senha foi emitida.
 
-**Proposta para validação:** filas, chamadas e painéis separados por unidade, de forma que uma unidade não chame senhas de outra.
+Filas, chamadas e painéis serão separados por unidade, de forma que uma unidade não chame senhas de outra.
 
 ### RF02 — Cadastro do assistido
 
@@ -85,12 +87,14 @@ O cadastro deverá conter:
 | Campo | Obrigatório | Observação |
 |---|---|---|
 | Nome | Sim | Nome do assistido. |
-| CPF | Sim | Utilizado na busca de cadastro existente. |
+| CPF | Não | Quando informado, deve ser válido e único; utilizado na busca de cadastro existente. |
 | Data de nascimento | Sim | Utilizada para calcular automaticamente a idade. |
 
 A idade não deverá exigir preenchimento manual.
 
-**Pendente:** definir como proceder quando o assistido não tiver ou não souber o CPF.
+Sem CPF, o cadastro e a emissão serão permitidos usando identificador interno. A recepção buscará por nome e nascimento e selecionará manualmente o cadastro correto ou optará por criar um novo. Nome e nascimento continuam obrigatórios. A busca por nome aceita trecho do nome junto à data exata de nascimento e apresenta até 50 resultados; refine o nome se necessário.
+
+O cadastro é compartilhado entre as unidades e acessível somente por usuários autenticados com autorização de operação em uma unidade. A recepção pode corrigir os dados na conferência; o cadastro selecionado é atualizado na emissão. Não se pode atribuir um CPF já vinculado a outro cadastro. A data de nascimento deve ser uma data válida, a partir de 01/01/1900 e não futura no fuso da unidade.
 
 ### RF03 — Busca por CPF
 
@@ -128,13 +132,15 @@ A primeira senha de cada tipo no novo dia deverá iniciar em `001`.
 
 O reinício da numeração não deverá apagar os registros anteriores. Uma senha deverá ser distinguível por sua unidade, data, tipo e número.
 
-**Pendente:** definir o tratamento de senhas que ainda estiverem aguardando quando ocorrer a mudança de dia.
+Na mudança de dia, senhas pendentes deixam de participar da fila, sem apagar o histórico. Se o assistido retornar, a recepção emite uma nova senha. Senhas de dias anteriores também deixam de ser atuais nos guichês e não podem ser chamadas novamente.
+
+O dia é determinado pelo relógio do servidor no fuso configurado na unidade, com padrão `America/Sao_Paulo`. O fuso deve ser definido antes da primeira emissão e não poderá ser alterado após existirem senhas, para preservar a interpretação das datas dos contadores.
 
 ### RF07 — Impressão
 
 A senha deverá ser disponibilizada em formato adequado para impressão.
 
-**Conteúdo sugerido para o comprovante:**
+**Conteúdo do comprovante:**
 
 - Nome da unidade.
 - Código da senha em destaque.
@@ -151,7 +157,7 @@ O atendente deverá utilizar o comando **“Chamar próxima senha”**, sem sele
 
 O sistema deverá impedir que a mesma senha seja chamada como próxima por dois guichês simultaneamente.
 
-**Proposta para validação:** chamar a senha há mais tempo aguardando na unidade, independentemente do tipo de atendimento.
+Chamar a senha há mais tempo aguardando na unidade no dia atual, independentemente do tipo de atendimento. A ordem é definida pela emissão no servidor, com desempate estável por identificador. Operações concorrentes são coordenadas por unidade para preservar essa ordem.
 
 ### RF09 — Repetição da chamada
 
@@ -174,7 +180,7 @@ As ações disponíveis nesta versão serão:
 
 Não foram solicitados comandos de finalização, cancelamento ou registro de ausência.
 
-**Proposta para validação:** ao chamar a próxima senha, a anterior deixa de ser a senha atual do guichê, sem que isso represente um registro de atendimento concluído.
+Ao chamar a próxima senha, a anterior deixa de ser a senha atual do guichê, sem que isso represente um registro de atendimento concluído. Se a fila estiver vazia, a senha atual do dia permanece disponível para repetição.
 
 ### RF11 — Painel de chamadas
 
@@ -188,7 +194,11 @@ O painel deverá apresentar:
 
 A cada chamada, deverá emitir **somente um alerta sonoro**, sem leitura por voz.
 
-**Proposta para validação:** o painel público não exibirá nome, CPF ou data de nascimento.
+O painel público e sua API não exibirão nome, CPF, data de nascimento ou identificador do assistido. Exibirão a unidade, senha, atendimento, guichê e últimas chamadas do dia.
+
+As chamadas são eventos persistidos e consultados automaticamente a cada segundo. Eventos recebidos entre consultas são apresentados em ordem, com intervalo de 2,5 segundos entre destaques. Cada nova chamada ou repetição gera um evento e um único alerta em cada painel com som ativado. Ao abrir/recarregar o painel, as chamadas já existentes são exibidas sem reproduzir sons históricos. Após uma interrupção temporária, a mesma página recupera os eventos ainda não recebidos do dia atual. Na virada do dia, o painel limpa as chamadas anteriores.
+
+O operador deverá clicar em **Ativar som** ao abrir o painel, conforme a restrição de reprodução automática dos navegadores. Caso o navegador suspenda o áudio, o controle solicita nova ativação. Não haverá leitura por voz. O painel indicará perda de conexão e tentará reconectar automaticamente.
 
 ### RF12 — Ausência de prioridade
 
@@ -225,6 +235,18 @@ A data de nascimento será utilizada para os dados cadastrais e o cálculo da id
 - Identificação textual e visual do atendimento.
 - Alerta sonoro a cada chamada.
 
+### 7.4. Login e configurações
+
+- Login por e-mail e senha; sessão de 12 horas e opção de sair.
+- Primeiro usuário criado por comando de configuração, sem credenciais padrão.
+- Cadastro e edição de usuários, unidades, vínculos e guichês por qualquer usuário autenticado.
+- Unidades e guichês podem ser desativados, preservando referências históricas.
+- Usuários podem ser desativados; o próprio usuário não pode desativar seu acesso.
+- Troca de senha e desativação invalidam as sessões do usuário afetado.
+- Ao criar uma unidade, seu criador recebe vínculo de operação automaticamente.
+- Senhas de acesso com pelo menos 12 caracteres; limitação de tentativas de login por e-mail.
+- Nomes dos guichês são únicos dentro da unidade; um guichê existente não muda de unidade.
+
 ## 8. Requisitos de qualidade
 
 - **Legibilidade:** senha e guichê devem ser facilmente reconhecíveis no painel.
@@ -233,13 +255,14 @@ A data de nascimento será utilizada para os dados cadastrais e o cálculo da id
 - **Atualização automática:** o painel deverá receber novas chamadas sem atualização manual.
 - **Proteção dos dados:** dados cadastrais deverão ficar restritos às telas e aos usuários autorizados.
 - **Recuperação de falha de impressão:** uma falha de impressão não deverá gerar automaticamente outra senha.
+- **Recuperação de requisição:** repetir a mesma operação de emissão ou chamada com o mesmo identificador de requisição retorna o resultado original, sem produzir efeitos duplicados. A interface preserva esse identificador ao tentar novamente uma operação que falhou sem confirmação.
 
 ## 9. Critérios de aceite principais
 
 | Cenário | Resultado esperado |
 |---|---|
 | Informar CPF já cadastrado | O sistema recupera os dados do assistido. |
-| Cadastrar um novo assistido | Nome, CPF e data de nascimento são registrados. |
+| Cadastrar um novo assistido | Nome e nascimento são registrados; CPF é registrado quando informado. |
 | Informar data de nascimento | A idade é calculada automaticamente. |
 | Emitir duas senhas de Família | São geradas FAM-001 e FAM-002, considerando o início do contador. |
 | Emitir uma senha Criminal após as anteriores | É gerada CRI-001, considerando o início desse contador. |
@@ -249,15 +272,18 @@ A data de nascimento será utilizada para os dados cadastrais e o cálculo da id
 | Chamar uma senha | O painel mostra a senha e o guichê, com alerta sonoro. |
 | Chamar novamente | A mesma senha é anunciada novamente, sem avançar a fila. |
 | Não haver senhas aguardando | O sistema informa que a fila está vazia. |
+| Emitir sem CPF | Busca por nome e nascimento permite selecionar ou criar cadastro e emitir. |
+| Duas unidades emitirem a primeira senha de Família | Cada uma emite FAM-001 na própria fila. |
+| Virar o dia com senha pendente | A senha antiga permanece registrada, sai da fila e exige nova emissão no retorno. |
+| Repetir a mesma requisição após perda de resposta | Retorna o resultado original, sem nova emissão ou avanço da fila. |
+| Consultar painel público | Nenhum dado pessoal do assistido é retornado. |
+| Operar em unidade sem vínculo | O servidor recusa a operação. |
+| Reimprimir um comprovante | A mesma senha é impressa, sem incrementar contador. |
 
-## 10. Pendências para fechar o PRD
+## 10. Decisões e evolução
 
-1. **Unidades:** podemos adotar filas, contadores e painéis independentes por unidade? Assim, duas unidades podem emitir `FAM-001` no mesmo dia.
-2. **Acessos:** recepção, atendente e administrador terão login? Algum outro perfil será necessário?
-3. **CPF:** se a pessoa não tiver ou não souber o CPF, o cadastro e a emissão ficarão bloqueados ou haverá uma exceção?
-4. **Ordem da fila:** podemos chamar pela ordem de chegada, misturando os quatro tipos de atendimento?
-5. **Troca da senha atual:** ao clicar em “Chamar próxima”, a senha anterior pode simplesmente deixar de ser a atual, sem finalização manual?
-6. **Painel público:** confirma a exibição somente de senha, tipo de atendimento e guichê, sem o nome do assistido?
-7. **Virada do dia:** senhas ainda aguardando devem deixar de participar da fila do novo dia ou continuar disponíveis para chamada?
+As sete pendências originais foram resolvidas com o solicitante: isolamento por unidade, login com perfil único, CPF opcional, fila por chegada, substituição da senha atual sem conclusão, painel sem dados pessoais e nova emissão no retorno em outro dia. Também foram aprovadas busca manual por nome/nascimento, telas de configuração para todos os usuários e fuso por unidade com padrão Brasília.
 
-Relatórios, integrações e funcionamento sem internet ficam para uma próxima rodada, conforme solicitado.
+Stack: Next.js, TypeScript e PostgreSQL. Conexão configurada por `DATABASE_URL` no `.env`; migrações e criação do primeiro usuário executadas por comandos documentados no README.
+
+Toda mudança de regra deverá atualizar este documento e os critérios de aceite correspondentes. Relatórios, integrações e funcionamento sem internet ficam para uma próxima rodada.

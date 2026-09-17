@@ -1,0 +1,8 @@
+.next/
+node_modules/
+package-lock.json
+next-env.d.ts
+.env
+prd.md
+.playwright-mcp/
+src/generated/prisma/
